@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AutoRecon Report</title>
+  <style>body { font-family: Arial; padding: 20px; }</style>
+</head>
+<body>
+  <h1>Security Scan Report</h1>
+  <p><strong>Scan Time:</strong> {{ timestamp }}</p>
+  <hr>
+  {% for res in results %}
+    <h2>Target: {{ res.target }}</h2>
+    {% if res.error %}
+      <p><strong>Error:</strong> {{ res.error }}</p>
+    {% else %}
+      <p><strong>Open Ports:</strong> {{ res.ports }}</p>
+      <p><strong>Exposed Endpoints:</strong> {{ res.endpoints }}</p>
+      <p><strong>SSL Info:</strong><br>
+        {{ res.ssl | tojson(indent=2) }}
+      </p>
+    {% endif %}
+    <hr>
+  {% endfor %}
+</body>
+</html>

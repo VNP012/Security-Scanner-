@@ -1,0 +1,88 @@
+import socket
+import ssl
+import asyncio
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+import httpx
+from jinja2 import Environment, FileSystemLoader
+
+SCAN_RESULTS = []
+
+# -------------------- CORE SCANNING --------------------
+async def scan_port(ip, port):
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=2)
+        writer.close()
+        await writer.wait_closed()
+        return port
+    except:
+        return None
+
+def get_ssl_info(domain):
+    ctx = ssl.create_default_context()
+    with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+        try:
+            s.settimeout(3)
+            s.connect((domain, 443))
+            cert = s.getpeercert()
+            return {
+                "subject": dict(x[0] for x in cert["subject"]),
+                "issuer": dict(x[0] for x in cert["issuer"]),
+                "valid_from": cert["notBefore"],
+                "valid_to": cert["notAfter"]
+            }
+        except:
+            return None
+
+async def scan_ports(ip):
+    common_ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 3306, 8080]
+    results = await asyncio.gather(*(scan_port(ip, p) for p in common_ports))
+    return [p for p in results if p is not None]
+
+async def check_endpoints(domain):
+    paths = ["/admin", "/debug", "/.env", "/config.json"]
+    found = []
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for path in paths:
+            try:
+                url = f"http://{domain}{path}"
+                r = await client.get(url)
+                if r.status_code == 200:
+                    found.append(url)
+            except:
+                continue
+    return found
+
+# -------------------- REPORT GENERATION --------------------
+def generate_report(results, output_path="output/report.html"):
+    env = Environment(loader=FileSystemLoader("templates"))
+    template = env.get_template("report_template.html")
+    html = template.render(results=results, timestamp=datetime.utcnow())
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        f.write(html)
+
+# -------------------- MAIN WORKFLOW --------------------
+async def run_autorecon(target):
+    result = {"target": target, "ports": [], "ssl": {}, "endpoints": []}
+
+    try:
+        ip = socket.gethostbyname(target)
+        result["ports"] = await scan_ports(ip)
+        result["ssl"] = get_ssl_info(target)
+        result["endpoints"] = await check_endpoints(target)
+    except Exception as e:
+        result["error"] = str(e)
+
+    SCAN_RESULTS.append(result)
+    generate_report(SCAN_RESULTS)
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 2:
+        print("Usage: python autorecon.py <target-domain>")
+    else:
+        asyncio.run(run_autorecon(sys.argv[1]))
